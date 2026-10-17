@@ -277,6 +277,7 @@ const state = {
   query: '',
   searchingMobile: false,
   view: localStorage.getItem('bs_view_mode') || 'list',
+  theme: localStorage.getItem('bs_theme') || 'dark',
   sort: 'date',
 
   detailId: null,
@@ -1527,7 +1528,15 @@ function render() {
   const appEl = document.getElementById('app');
   if (!appEl) return;
 
+  if (state.theme === 'light') document.body.classList.add('theme-light');
+  else document.body.classList.remove('theme-light');
+
   const list = getFilteredList();
+  const liveItems = state.items.filter(i => !i.trashed);
+  const topFolders = liveItems.filter(i => i.kind === 'folder' && i.parent === 'root').slice(0, 6);
+  const videoCount = liveItems.filter(i => i.kind === 'video').length;
+  const docCount = liveItems.filter(i => ['doc', 'pdf'].includes(i.kind)).length;
+
   const curFolder = state.nav === 'drive' && state.folder !== 'root' ? byId(state.folder) : null;
   const navObj = NAV_TABS.find(n => n[0] === state.nav) || NAV_TABS[0];
   const headerTitle = state.nav === 'drive'
@@ -1538,6 +1547,18 @@ function render() {
   const sortLabel = (SORTS.find(x => x[0] === state.sort) || SORTS[0])[1];
   const st = getStorageStats();
 
+  const kindLabelMap = {
+    folder: '폴더',
+    video: '4K/HD 영상',
+    image: '이미지·스틸',
+    audio: '음원·녹음',
+    psd: '그래픽 원본',
+    doc: '문서·큐시트',
+    pdf: 'PDF 문서',
+    zip: '압축 아카이브',
+    file: '일반 파일'
+  };
+
   appEl.innerHTML = `
     <div class="app-shell"
       ondragover="event.preventDefault(); setDragging(true)"
@@ -1545,66 +1566,84 @@ function render() {
       ondrop="handleDrop(event)">
 
       <div class="drop-overlay ${state.dragging ? 'active' : ''}">
-        ${iconSvg('upload', 48)}
-        <div style="font-size:18px;font-weight:700">여기에 파일을 놓아 바로 업로드하세요</div>
-        <div style="font-size:13px">${esc(curFolder ? curFolder.name : state.driveName)} 폴더에 즉시 저장됩니다</div>
+        ${iconSvg('upload', 52)}
+        <div style="font-size:19px;font-weight:800">여기에 파일을 놓아 지정 폴더에 즉시 업로드하세요</div>
+        <div style="font-size:13.5px;color:#93C5FD">${esc(curFolder ? curFolder.name : state.driveName)} (${esc(LOCKED_ROOT_FOLDER_ID.slice(0, 10))}...) 내부에 안전하게 저장됩니다</div>
       </div>
 
-      <!-- Studio Dark Sidebar -->
+      <!-- LEFT SIDEBAR: ON-AIR STUDIO CONTROL DECK -->
       <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-logo">${iconSvg('play', 19)}</div>
+        <div class="brand-card">
+          <div class="brand-logo">${iconSvg('play', 20)}</div>
           <div style="min-width:0;flex:1">
             <div class="brand-title">${esc(state.driveName)}</div>
-            <div class="brand-sub">
-              <span class="live-pulse"></span>
-              <span>내 구글 드라이브 상시 연결됨</span>
+            <div class="on-air-pill">
+              <span class="live-dot"></span>
+              <span>ON-AIR · 상시 연결됨</span>
             </div>
           </div>
         </div>
 
         <button class="new-btn-desktop" onclick="openSheet('upload')">
           ${iconSvg('plus', 20)}
-          <span>파일 업로드 / 새로 만들기</span>
+          <span>미디어 업로드 · 새로 만들기</span>
         </button>
 
         <nav class="side-nav">
-          <div class="side-nav-label">Broadcast Storage</div>
+          <div class="side-nav-label">Broadcast Workspace</div>
           ${NAV_TABS.map(([k, label, icn]) => {
             const active = state.nav === k;
             const cnt = countByNav(k);
             return `
               <button class="side-nav-item ${active ? 'active' : ''}" onclick="switchNav('${k}')">
                 <span style="display:flex;align-items:center;gap:11px">
-                  ${iconSvg(active && k === 'starred' ? 'starFill' : icn, 19)}
+                  ${iconSvg(active && k === 'starred' ? 'starFill' : icn, 18)}
                   <span>${esc(label)}</span>
                 </span>
                 <span class="nav-count-pill">${cnt}</span>
               </button>
             `;
           }).join('')}
+
+          ${topFolders.length ? `
+            <div class="side-nav-label" style="margin-top:10px">지정 폴더 빠른 이동</div>
+            <button class="quick-folder-item ${state.nav === 'drive' && state.folder === 'root' ? 'active' : ''}" onclick="navigateToFolder('root')">
+              <span style="color:#60A5FA;display:flex">${iconSvg('hardDrive', 15)}</span>
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">최상위 지정 폴더 (Root)</span>
+            </button>
+            ${topFolders.map(tf => `
+              <button class="quick-folder-item ${state.nav === 'drive' && state.folder === tf.id ? 'active' : ''}" onclick="navigateToFolder('${tf.id}')">
+                <span style="color:#3B82F6;display:flex">${iconSvg('folderFill', 15)}</span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(tf.name)}</span>
+              </button>
+            `).join('')}
+          ` : ''}
         </nav>
 
-        <!-- Bottom Left Storage Status & Total Capacity Widget -->
+        <!-- 왼쪽 밑 저장소 상태 & 총 용량 위젯 (Bottom-Left Storage Status & Total Capacity) -->
         <div class="sidebar-footer">
           <div class="storage-widget">
-            <div class="storage-top">
+            <div class="storage-header-row">
               <div class="storage-title">
-                ${iconSvg('cloud', 16)}
+                <span style="color:#60A5FA;display:flex">${iconSvg('cloud', 16)}</span>
                 <span>저장소 상태</span>
               </div>
-              <span class="always-on-badge">
-                <span style="width:5px;height:5px;border-radius:50%;background:#34D399"></span>
-                상시 연결됨
-              </span>
+              <span class="storage-status-tag">${st.pctTotal}% 사용 중</span>
             </div>
 
-            <div class="capacity-numbers">
-              <span class="capacity-used">${st.usedGb} GB <span style="font-size:12px;font-weight:600;color:#93C5FD">사용 중</span></span>
-              <span class="capacity-total">총 용량 ${st.totalGb} GB</span>
+            <div class="total-capacity-box">
+              <div class="cap-col">
+                <span class="cap-label">현재 사용량</span>
+                <span class="cap-val-used">${st.usedGb} GB</span>
+              </div>
+              <div style="width:1px;height:28px;background:rgba(255,255,255,0.1)"></div>
+              <div class="cap-col" style="align-items:flex-end">
+                <span class="cap-label">드라이브 총 용량</span>
+                <span class="cap-val-total">총 ${st.totalGb} GB</span>
+              </div>
             </div>
 
-            <div class="storage-bar-segmented" title="사용률 ${st.pctTotal}% (여유 공간 ${st.freeGb} GB)">
+            <div class="storage-bar-segmented" title="총 용량 ${st.totalGb} GB 중 ${st.usedGb} GB 사용 (여유 ${st.freeGb} GB)">
               <div class="seg-bar" style="width:${st.pVideo}%;background:#8B5CF6"></div>
               <div class="seg-bar" style="width:${st.pArchive}%;background:#3B82F6"></div>
               <div class="seg-bar" style="width:${st.pOther}%;background:#10B981"></div>
@@ -1614,63 +1653,69 @@ function render() {
               <div class="legend-item"><span class="legend-dot" style="background:#8B5CF6"></span>영상 ${st.videoGb}GB</div>
               <div class="legend-item"><span class="legend-dot" style="background:#3B82F6"></span>백업·PSD ${st.archiveGb}GB</div>
               <div class="legend-item"><span class="legend-dot" style="background:#10B981"></span>음원·문서 ${st.otherGb}GB</div>
-              <div class="legend-item"><span class="legend-dot" style="background:#475569"></span>여유 ${st.freeGb}GB</div>
+              <div class="legend-item"><span class="legend-dot" style="background:#64748B"></span>여유 ${st.freeGb}GB</div>
             </div>
 
             <button class="storage-cfg-btn" onclick="openSheet('settings')">
-              ${iconSvg('settings', 14)} 드라이브 용량 및 연동 관리
+              ${iconSvg('settings', 14)} 총 용량 설정 · 구글 동기화
             </button>
           </div>
         </div>
       </aside>
 
-      <!-- Main Area -->
+      <!-- MAIN WORKSPACE AREA -->
       <main class="main-area">
         ${state.searchingMobile ? `
           <div class="top-header">
-            <div style="flex:1;display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;border-radius:12px;background:#F1F5F9;color:#64748B">
+            <div style="flex:1;display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;border-radius:12px;background:var(--bg-card);border:1px solid var(--border-strong)">
               ${iconSvg('search', 18)}
-              <input id="mobile-search-input" value="${esc(state.query)}" oninput="onSearchInput(this.value)" placeholder="파일명, 메모, 업로더 검색..." style="flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:15px;color:#111827">
+              <input id="mobile-search-input" value="${esc(state.query)}" oninput="onSearchInput(this.value)" placeholder="파일명, 메모, 업로더 검색..." style="flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:15px">
             </div>
-            <button onclick="closeMobileSearch()" style="height:42px;padding:0 8px;font-size:15px;font-weight:600;color:#2563EB">취소</button>
+            <button onclick="closeMobileSearch()" style="height:42px;padding:0 8px;font-size:15px;font-weight:700;color:#60A5FA">취소</button>
           </div>
         ` : `
           <header class="top-header">
             ${showBack ? `
               <button class="icon-btn" onclick="goBackFolder()" title="상위 폴더로">${iconSvg('chevronLeft', 22)}</button>
             ` : `
-              <div style="width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#2563EB 0%,#4F46E5 100%);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,0.3)">${iconSvg('play', 16)}</div>
+              <div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#2563EB 0%,#7C3AED 100%);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 6px 16px rgba(59,130,246,0.4)">${iconSvg('folderFill', 18)}</div>
             `}
 
             <div class="header-title-wrap">
-              <div class="header-title">
-                <span>${esc(headerTitle)}</span>
+              <div class="header-title-row">
+                <span class="header-title">${esc(headerTitle)}</span>
+                <span class="folder-lock-badge" title="지정된 구글 드라이브 폴더(${esc(LOCKED_ROOT_FOLDER_ID)}) 외 외부 폴더 접근 차단됨">
+                  🔒 지정 폴더 전용 · 외부 폴더 차단됨
+                </span>
               </div>
               ${crumbs.length ? `
                 <div class="breadcrumbs">
                   ${crumbs.map((c, idx) => `
                     <span class="crumb-link" onclick="navigateToFolder('${c.id}')">${esc(c.name)}</span>
-                    ${idx < crumbs.length - 1 ? '<span>›</span>' : ''}
+                    ${idx < crumbs.length - 1 ? '<span style="opacity:0.5">›</span>' : ''}
                   `).join('')}
                 </div>
               ` : `
                 <div class="breadcrumbs">
-                  <span style="color:#10B981;font-weight:600">● 내 드라이브 상시 동기화</span>
+                  <span style="color:#34D399;font-weight:700">● 내 드라이브 상시 연결</span>
                   <span>·</span>
-                  <span>총 용량 ${st.totalGb} GB 중 ${st.usedGb} GB 사용 (${st.freeGb} GB 여유)</span>
+                  <span>총 용량 <strong>${st.totalGb} GB</strong> 중 ${st.usedGb} GB 사용 (여유 ${st.freeGb} GB)</span>
                 </div>
               `}
             </div>
 
             <div class="search-box-desktop">
-              ${iconSvg('search', 17)}
-              <input value="${esc(state.query)}" oninput="onSearchInput(this.value)" placeholder="파일, 큐시트, 업로더 검색...">
+              ${iconSvg('search', 16)}
+              <input value="${esc(state.query)}" oninput="onSearchInput(this.value)" placeholder="지정 폴더 내 영상, 큐시트, 업로더 검색...">
               ${state.query ? `<button onclick="onSearchInput('')" style="color:#94A3B8;display:flex">${iconSvg('x', 15)}</button>` : ''}
             </div>
 
-            <button class="icon-btn" onclick="openMobileSearch()" title="검색">${iconSvg('search', 20)}</button>
-            <button class="icon-btn" onclick="fetchFiles()" title="동기화 새로고침">${iconSvg('refresh', 19)}</button>
-            <button class="icon-btn" onclick="openSheet('settings')" title="드라이브 설정">${iconSvg('settings', 20)}</button>
+            <button class="icon-btn" onclick="openMobileSearch()" title="검색" style="display:none">${iconSvg('search', 19)}</button>
+            <button class="icon-btn" onclick="toggleTheme()" title="스튜디오 다크 / 라이트 테마 전환">
+              ${state.theme === 'light' ? '🌙' : '☀️'}
+            </button>
+            <button class="icon-btn" onclick="fetchFiles()" title="구글 드라이브 즉시 새로고침">${iconSvg('refresh', 18)}</button>
+            <button class="icon-btn" onclick="openSheet('settings')" title="저장소 및 연동 설정">${iconSvg('settings', 19)}</button>
 
             <div class="user-pill" onclick="openSheet('user')" title="클릭하여 접속 부원 이름 변경">
               <div class="user-avatar">${esc(state.currentUser.slice(-2))}</div>
@@ -1679,27 +1724,62 @@ function render() {
           </header>
         `}
 
-        <!-- Sub-Toolbar: Category Filter Chips + Sort + View Mode -->
+        <!-- STUDIO PRODUCTION KPI STRIP -->
+        <section class="studio-Overview-strip">
+          <div class="stat-card" onclick="switchNav('drive')" style="cursor:pointer">
+            <div class="stat-icon" style="background:rgba(59,130,246,0.16);color:#60A5FA">${iconSvg('hardDrive', 20)}</div>
+            <div class="stat-info">
+              <span class="stat-label">지정 폴더 전체 자산</span>
+              <span class="stat-value">${liveItems.length}개 항목</span>
+            </div>
+          </div>
+          <div class="stat-card" onclick="setTypeFilter(state.typeFilter === 'video' ? 'all' : 'video')" style="cursor:pointer">
+            <div class="stat-icon" style="background:rgba(139,92,246,0.16);color:#A78BFA">${iconSvg('film', 20)}</div>
+            <div class="stat-info">
+              <span class="stat-label">방송 영상 클립</span>
+              <span class="stat-value">${videoCount}개 (${st.videoGb} GB)</span>
+            </div>
+          </div>
+          <div class="stat-card" onclick="setTypeFilter(state.typeFilter === 'doc' ? 'all' : 'doc')" style="cursor:pointer">
+            <div class="stat-icon" style="background:rgba(16,185,129,0.16);color:#34D399">${iconSvg('fileText', 20)}</div>
+            <div class="stat-info">
+              <span class="stat-label">큐시트 · 제작 문서</span>
+              <span class="stat-value">${docCount}개 문서</span>
+            </div>
+          </div>
+          <div class="stat-card" onclick="openSheet('settings')" style="cursor:pointer">
+            <div class="stat-icon" style="background:rgba(245,158,11,0.16);color:#FBBF24">${iconSvg('cloud', 20)}</div>
+            <div class="stat-info">
+              <span class="stat-label">저장소 총 용량 상태</span>
+              <span class="stat-value">${st.usedGb} / 총 ${st.totalGb} GB</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Sub-Toolbar: Category Filter Chips + Quick Actions + Sort + View Mode -->
         <div class="sub-toolbar">
           <div class="filter-chips">
             ${TYPE_FILTERS.map(([k, label]) => `
               <button class="chip-btn ${state.typeFilter === k ? 'active' : ''}" onclick="setTypeFilter('${k}')">${esc(label)}</button>
             `).join('')}
             ${state.nav === 'drive' ? `
-              <button onclick="openCreateDocSheet()" style="height:34px;padding:0 13px;border-radius:99px;background:#EFF6FF;border:1px solid #BFDBFE;color:#2563EB;font-size:13px;font-weight:700;display:flex;align-items:center;gap:5px;white-space:nowrap">
+              <button class="quick-action-pill" onclick="openCreateFolderSheet()">
+                ${iconSvg('folderPlus', 14)} + 새 폴더
+              </button>
+              <button class="quick-action-pill" onclick="openCreateDocSheet()">
                 ${iconSvg('fileText', 14)} + 큐시트/문서 작성
               </button>
             ` : ''}
           </div>
 
           <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
-            <span style="font-size:13px;font-weight:600;color:#64748B">${list.length}개 항목</span>
+            <span style="font-size:12.5px;font-weight:700;color:var(--text-secondary)">표시 ${list.length}개</span>
             <button class="sort-btn" onclick="openSheet('sort')">
               <span>${esc(sortLabel)}</span>
               ${iconSvg('chevronDown', 14)}
             </button>
-            <button class="icon-btn" style="background:#fff;border:1px solid #E2E8F0;width:36px;height:34px;border-radius:10px" onclick="toggleViewMode()" title="보기 방식 전환">
-              ${iconSvg(state.view === 'list' ? 'grid' : 'list', 18)}
+            <button class="icon-btn" style="width:36px;height:34px;border-radius:10px" onclick="toggleViewMode()" title="테이블 / 그리드 보기 전환">
+              ${iconSvg(state.view === 'list' ? 'grid' : 'list', 17)}
             </button>
           </div>
         </div>
@@ -1707,67 +1787,97 @@ function render() {
         <!-- Mobile Storage Bar -->
         <div class="mobile-storage-bar" onclick="openSheet('settings')">
           <div style="display:flex;align-items:center;gap:8px">
-            <span class="live-pulse"></span>
-            <span style="font-weight:700">저장소 상시 연결됨</span>
+            <span class="live-dot"></span>
+            <span style="font-weight:700">저장소 상태 (상시 연결)</span>
           </div>
-          <div style="font-variant-numeric:tabular-nums;color:#93C5FD;font-weight:600">
-            ${st.usedGb} GB / 총 ${st.totalGb} GB (${st.pctTotal}%)
+          <div style="font-variant-numeric:tabular-nums;color:#93C5FD;font-weight:800">
+            ${st.usedGb} GB / 총 용량 ${st.totalGb} GB
           </div>
         </div>
 
-        <!-- File List / Grid -->
+        <!-- File List / Bento Grid -->
         <div class="file-scroll">
           ${state.loading ? `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;color:#64748B">
-              <div style="font-size:15px;font-weight:600">드라이브 데이터를 불러오는 중입니다...</div>
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;color:var(--text-secondary)">
+              <div style="font-size:15px;font-weight:700">지정된 공유 드라이브 폴더를 동기화하는 중입니다...</div>
             </div>
           ` : list.length === 0 ? `
-            <div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:76px 32px;text-align:center">
-              <div style="width:58px;height:58px;border-radius:50%;background:#E2E8F0;color:#64748B;display:flex;align-items:center;justify-content:center;margin-bottom:6px">${iconSvg('folder', 26)}</div>
-              <span style="font-size:16px;font-weight:700">${state.query || state.typeFilter !== 'all' ? '조건에 맞는 파일이 없습니다' : state.nav === 'trash' ? '휴지통이 비어 있습니다' : '이 폴더는 비어 있습니다'}</span>
-              <span style="font-size:13px;color:#64748B">${state.query || state.typeFilter !== 'all' ? '검색어나 카테고리 필터를 초기화해 보세요.' : '+ 업로드 버튼을 누르거나 파일을 화면에 끌어다 놓으세요.'}</span>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:76px 32px;text-align:center;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:20px">
+              <div style="width:60px;height:60px;border-radius:50%;background:rgba(59,130,246,0.14);color:#60A5FA;display:flex;align-items:center;justify-content:center;margin-bottom:4px">${iconSvg('folder', 28)}</div>
+              <span style="font-size:16.5px;font-weight:800">${state.query || state.typeFilter !== 'all' ? '조건에 맞는 파일이 없습니다' : state.nav === 'trash' ? '휴지통이 비어 있습니다' : '이 폴더는 비어 있습니다'}</span>
+              <span style="font-size:13px;color:var(--text-secondary)">${state.query || state.typeFilter !== 'all' ? '검색어나 카테고리 필터를 초기화해 보세요.' : '상단 업로드 버튼을 누르거나 파일을 화면에 끌어다 놓으세요.'}</span>
             </div>
           ` : state.view === 'list' ? `
             <div class="file-list">
+              <div class="file-list-header">
+                <span>파일 / 폴더 이름</span>
+                <span class="cell-hide-md">미디어 분류</span>
+                <span class="cell-hide-md">용량 · 길이</span>
+                <span class="cell-hide-md">업로더 · 수정일</span>
+                <span style="text-align:right">빠른 작업</span>
+              </div>
               ${list.map(it => {
                 const k = KINDS[it.kind] || KINDS.file;
                 const isVideo = it.kind === 'video';
+                const kindText = kindLabelMap[it.kind] || '파일';
+                const sizeText = it.kind === 'folder' ? `${countIn(it.id)}개 항목` : fmtSize(it.size);
                 return `
                   <div class="file-row" onclick="handleItemTap('${it.id}')">
-                    ${isVideo ? `
-                      <div class="video-thumb-sm">
-                        ${iconSvg('play', 16)}
-                        ${it.dur ? `<span class="dur-badge">${esc(it.dur)}</span>` : ''}
-                      </div>
-                    ` : `
-                      <div class="icon-box" style="background:${k.bg};color:${k.color}">
-                        ${iconSvg(k.icon, 22)}
-                      </div>
-                    `}
-                    <div class="row-info">
-                      <div class="row-name">
-                        <span style="overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</span>
-                        ${it.editable ? `<span class="edit-tag">편집가능</span>` : ''}
-                      </div>
-                      <div class="row-meta">
-                        ${it.starred ? `<span style="display:flex;color:#F59E0B">${iconSvg('starFill', 12)}</span>` : ''}
-                        ${it.shared ? `<span style="display:flex;color:#64748B">${iconSvg('users', 12)}</span>` : ''}
-                        <span style="overflow:hidden;text-overflow:ellipsis">${esc(formatMeta(it))}</span>
+                    <div class="row-main-cell">
+                      ${isVideo ? `
+                        <div class="video-thumb-sm">
+                          ${iconSvg('play', 16)}
+                          ${it.dur ? `<span class="dur-badge">${esc(it.dur)}</span>` : ''}
+                        </div>
+                      ` : `
+                        <div class="icon-box" style="background:${k.bg};color:${k.color}">
+                          ${iconSvg(k.icon, 22)}
+                        </div>
+                      `}
+                      <div class="row-info">
+                        <div class="row-name">
+                          ${it.starred ? `<span style="display:flex;color:#F59E0B;flex-shrink:0">${iconSvg('starFill', 13)}</span>` : ''}
+                          <span style="overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</span>
+                          ${it.editable ? `<span class="edit-tag">직접편집</span>` : ''}
+                        </div>
+                        <div class="row-desc-sub">
+                          ${esc(it.description || formatMeta(it))}
+                        </div>
                       </div>
                     </div>
+
+                    <div class="cell-hide-md">
+                      <span class="kind-badge" style="background:${k.bg};color:${k.color}">${esc(kindText)}</span>
+                    </div>
+
+                    <div class="cell-size cell-hide-md">
+                      ${esc(sizeText)}${it.dur ? ` · ${esc(it.dur)}` : ''}
+                    </div>
+
+                    <div class="cell-owner cell-hide-md">
+                      <span class="owner-dot">${esc((it.by || '부원').slice(0, 1))}</span>
+                      <div style="display:flex;flex-direction:column;min-width:0">
+                        <span style="color:var(--text-primary);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.by)}</span>
+                        <span style="font-size:11px;color:var(--text-muted)">${esc(dateLabel(it.date))}</span>
+                      </div>
+                    </div>
+
                     <div class="row-quick-actions">
+                      <button class="row-action-btn" onclick="event.stopPropagation(); toggleStarById('${it.id}')" title="즐겨찾기" style="color:${it.starred ? '#F59E0B' : 'var(--text-secondary)'}">
+                        ${iconSvg(it.starred ? 'starFill' : 'star', 16)}
+                      </button>
                       ${it.editable && !it.trashed ? `
-                        <button class="icon-btn" onclick="event.stopPropagation(); openEditorById('${it.id}')" title="문서 바로 편집" style="color:#2563EB">
-                          ${iconSvg('pencil', 18)}
+                        <button class="row-action-btn" onclick="event.stopPropagation(); openEditorById('${it.id}')" title="문서 바로 편집" style="color:#60A5FA">
+                          ${iconSvg('pencil', 16)}
                         </button>
                       ` : ''}
                       ${it.kind !== 'folder' && !it.trashed ? `
-                        <button class="icon-btn" onclick="event.stopPropagation(); downloadItemById('${it.id}')" title="다운로드" style="color:#475569">
-                          ${iconSvg('download', 18)}
+                        <button class="row-action-btn" onclick="event.stopPropagation(); downloadItemById('${it.id}')" title="원본 다운로드">
+                          ${iconSvg('download', 17)}
                         </button>
                       ` : ''}
-                      <button class="icon-btn" onclick="event.stopPropagation(); openActionsSheet('${it.id}')" title="더보기">
-                        ${iconSvg('moreV', 20)}
+                      <button class="row-action-btn" onclick="event.stopPropagation(); openActionsSheet('${it.id}')" title="수정 / 이동 / 상세 메뉴">
+                        ${iconSvg('moreV', 18)}
                       </button>
                     </div>
                   </div>
@@ -1779,24 +1889,25 @@ function render() {
               ${list.map(it => {
                 const k = KINDS[it.kind] || KINDS.file;
                 const isVideo = it.kind === 'video';
-                const thumbBg = isVideo ? 'linear-gradient(135deg,#0F172A 0%,#1E293B 60%,#334155 100%)'
-                  : it.kind === 'image' ? 'linear-gradient(135deg,#E0F2FE 0%,#BAE6FD 100%)'
+                const thumbBg = isVideo ? 'linear-gradient(135deg,#0F172A 0%,#1E1B4B 60%,#312E81 100%)'
+                  : it.kind === 'image' ? 'linear-gradient(135deg,#0C4A6E 0%,#0284C7 100%)'
                   : k.bg;
                 const shortMeta = it.kind === 'folder' ? `${countIn(it.id)}개 항목` : `${fmtSize(it.size)} · ${dateLabel(it.date)}`;
                 return `
                   <div class="grid-card" onclick="handleItemTap('${it.id}')">
-                    <div class="grid-thumb" style="background:${thumbBg};color:${isVideo ? '#fff' : k.color}">
-                      ${isVideo ? iconSvg('play', 30) : iconSvg(k.icon, 38)}
-                      ${isVideo && it.dur ? `<span class="dur-badge" style="right:6px;bottom:6px;font-size:10px">${esc(it.dur)}</span>` : ''}
-                      ${it.starred ? `<span style="position:absolute;left:8px;top:8px;color:#F59E0B">${iconSvg('starFill', 14)}</span>` : ''}
+                    <div class="grid-thumb" style="background:${thumbBg};color:${isVideo || it.kind === 'image' ? '#fff' : k.color}">
+                      ${isVideo ? iconSvg('play', 32) : iconSvg(k.icon, 38)}
+                      ${isVideo && it.dur ? `<span class="dur-badge" style="right:8px;bottom:8px;font-size:10.5px">${esc(it.dur)}</span>` : ''}
+                      ${it.starred ? `<span style="position:absolute;left:10px;top:10px;color:#F59E0B">${iconSvg('starFill', 15)}</span>` : ''}
+                      ${it.editable ? `<span class="edit-tag" style="position:absolute;right:8px;top:8px">직접편집</span>` : ''}
                     </div>
                     <div class="grid-footer">
-                      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-                        <span style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span>
-                        <span style="font-size:11.5px;color:#64748B;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortMeta)}</span>
+                      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                        <span style="font-size:13.5px;font-weight:700;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span>
+                        <span style="font-size:11.5px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortMeta)} · ${esc(it.by)}</span>
                       </div>
-                      <button class="icon-btn" style="width:32px;height:36px" onclick="event.stopPropagation(); openActionsSheet('${it.id}')">
-                        ${iconSvg('moreV', 18)}
+                      <button class="row-action-btn" style="width:32px;height:32px" onclick="event.stopPropagation(); openActionsSheet('${it.id}')">
+                        ${iconSvg('moreV', 17)}
                       </button>
                     </div>
                   </div>
@@ -1836,6 +1947,12 @@ function render() {
 
   renderToasts();
 }
+
+window.toggleTheme = () => {
+  state.theme = state.theme === 'light' ? 'dark' : 'light';
+  localStorage.setItem('bs_theme', state.theme);
+  render();
+};
 
 // ============================================================================
 // UI EVENT HANDLERS (GLOBAL)
