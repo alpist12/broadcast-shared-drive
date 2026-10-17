@@ -321,15 +321,29 @@ app.get('/api/files', async (req, res) => {
     if (client) {
       const { drive, cfg } = client;
       const rootId = cfg.rootFolderId || 'root';
-      // Fetch up to 500 files from the user's Google Drive
-      const response = await drive.files.list({
-        pageSize: 500,
-        q: "mimeType != 'application/vnd.google-apps.shortcut'",
-        fields: 'files(id, name, mimeType, size, modifiedTime, parents, starred, shared, trashed, description, webViewLink, webContentLink, thumbnailLink, appProperties, owners, videoMediaMetadata)',
-        orderBy: 'folder,modifiedTime desc'
-      });
+      // Fetch up to 500 files from the user's Google Drive + Storage Quota
+      const [response, aboutRes] = await Promise.all([
+        drive.files.list({
+          pageSize: 500,
+          q: "mimeType != 'application/vnd.google-apps.shortcut'",
+          fields: 'files(id, name, mimeType, size, modifiedTime, parents, starred, shared, trashed, description, webViewLink, webContentLink, thumbnailLink, appProperties, owners, videoMediaMetadata)',
+          orderBy: 'folder,modifiedTime desc'
+        }),
+        drive.about.get({ fields: 'storageQuota,user' }).catch(() => ({ data: {} }))
+      ]);
       const files = (response.data.files || []).map(f => mapDriveFile(f, rootId));
-      return res.json({ mode: 'google', rootFolderId: rootId, items: files });
+      const sq = aboutRes.data?.storageQuota || null;
+      return res.json({
+        mode: 'google',
+        rootFolderId: rootId,
+        storageQuota: sq ? {
+          limitGb: sq.limit ? Number((Number(sq.limit) / (1024 ** 3)).toFixed(1)) : 100,
+          usageGb: sq.usage ? Number((Number(sq.usage) / (1024 ** 3)).toFixed(2)) : 0,
+          usageInDriveGb: sq.usageInDrive ? Number((Number(sq.usageInDrive) / (1024 ** 3)).toFixed(2)) : 0,
+          usageInTrashGb: sq.usageInDriveTrash ? Number((Number(sq.usageInDriveTrash) / (1024 ** 3)).toFixed(2)) : 0
+        } : null,
+        items: files
+      });
     }
 
     // Local mode

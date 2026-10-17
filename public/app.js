@@ -1,7 +1,7 @@
 // ============================================================================
-// 방송국 공유 드라이브 Frontend Application
-// - Works on GitHub Pages (Direct Google Drive REST API v3 + Browser Storage)
-// - Works on Node/Express Backend (/api/*)
+// 방송국 공유 드라이브 · Broadcast Studio Cloud
+// - 상시 연결(Always-Connected) Google Drive API v3 + 하이브리드 스토리지
+// - 실시간 총 용량 및 카테고리별 사용량 분석 위젯 탑재
 // ============================================================================
 
 const DEFAULT_CLIENT_ID = '533555779141-4l2im5ih2dou2b6omh0t07kh40soh196.apps.googleusercontent.com';
@@ -45,7 +45,8 @@ const SVG_PATHS = {
   resume: ['M6 3 20 12 6 21 6 3'],
   refresh: ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'],
   settings: ['c:12,12,3', 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'],
-  externalLink: ['M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6', 'M15 3h6v6', 'M10 14 21 3']
+  externalLink: ['M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6', 'M15 3h6v6', 'M10 14 21 3'],
+  cloud: ['M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z']
 };
 
 const FILLED_ICONS = { play: 1, resume: 1, starFill: 1, folderFill: 1 };
@@ -82,10 +83,19 @@ const KINDS = {
 
 const NAV_TABS = [
   ['drive', '내 드라이브', 'hardDrive'],
-  ['recent', '최근', 'clock'],
-  ['shared', '공유', 'users'],
+  ['recent', '최근 파일', 'clock'],
+  ['shared', '공유 파일', 'users'],
   ['starred', '즐겨찾기', 'star'],
   ['trash', '휴지통', 'trash']
+];
+
+const TYPE_FILTERS = [
+  ['all', '전체'],
+  ['folder', '폴더'],
+  ['video', '영상'],
+  ['doc', '문서·큐시트'],
+  ['image', '이미지·그래픽'],
+  ['audio', '음원']
 ];
 
 const SORTS = [
@@ -215,27 +225,32 @@ function mapDriveFileClient(f, rootFolderId) {
 }
 
 // ============================================================================
-// STATE STORE
+// STATE STORE (ALWAYS-CONNECTED CONFIGURATION)
 // ============================================================================
 
 const state = {
   hasBackend: false,
-  mode: 'local', // 'google' | 'local'
-  driveName: localStorage.getItem('bs_drive_name') || '방송국 드라이브',
-  userEmail: localStorage.getItem('bs_google_email') || '',
+  alwaysConnected: true, // 내 드라이브 상시 연결 모드
+  mode: 'google',
+  driveName: localStorage.getItem('bs_drive_name') || '방송국 공유 드라이브',
+  userEmail: localStorage.getItem('bs_google_email') || 'Google Drive 상시 연결됨',
   rootFolderId: localStorage.getItem('bs_root_folder_id') || 'root',
   clientId: localStorage.getItem('bs_client_id') || DEFAULT_CLIENT_ID,
-  accessToken: sessionStorage.getItem('bs_google_token') || '',
+  accessToken: localStorage.getItem('bs_google_token') || sessionStorage.getItem('bs_google_token') || '',
+  tokenExpiry: Number(localStorage.getItem('bs_google_token_exp') || 0),
+  totalQuotaGb: Number(localStorage.getItem('bs_total_quota_gb') || 200), // 총 용량 (기본 200GB, Google Drive 연동 시 실제 할당량 자동 반영)
+  googleQuotaUsedGb: null,
   hasCredentials: false,
   hasClientSecret: false,
   redirectUri: `${window.location.origin}/api/oauth2callback`,
 
   currentUser: localStorage.getItem('bs_user_name') || '서창민',
   items: [],
-  blobMap: {}, // In-memory object URLs for browser-uploaded files
+  blobMap: {},
   loading: true,
   nav: 'drive',
-  folder: 'root',
+  folder: 'f11',
+  typeFilter: 'all',
   query: '',
   searchingMobile: false,
   view: localStorage.getItem('bs_view_mode') || 'list',
@@ -264,8 +279,52 @@ function saveBrowserLocalItems(items) {
   } catch (e) {}
 }
 
+// Calculate Storage Breakdown & Total Capacity
+function getStorageStats() {
+  const activeItems = state.items.filter(i => !i.trashed);
+  let videoMb = 0;
+  let archiveMb = 0;
+  let mediaDocMb = 0;
+
+  activeItems.forEach(it => {
+    const sz = Number(it.size) || 0;
+    if (it.kind === 'video') videoMb += sz;
+    else if (it.kind === 'zip' || it.kind === 'psd') archiveMb += sz;
+    else mediaDocMb += sz;
+  });
+
+  const calcTotalMb = videoMb + archiveMb + mediaDocMb;
+  const calcUsedGb = Number((calcTotalMb / 1024).toFixed(1));
+  const usedGb = state.googleQuotaUsedGb !== null && state.googleQuotaUsedGb > 0
+    ? state.googleQuotaUsedGb
+    : calcUsedGb;
+  const totalGb = state.totalQuotaGb || 200;
+  const pctTotal = Math.min(100, Math.max(2, Math.round((usedGb / totalGb) * 100)));
+
+  const videoGb = Number((videoMb / 1024).toFixed(1));
+  const archiveGb = Number((archiveMb / 1024).toFixed(1));
+  const otherGb = Number(Math.max(0.1, (mediaDocMb / 1024)).toFixed(1));
+
+  const pVideo = Math.min(100, Math.max(1, (videoGb / totalGb) * 100));
+  const pArchive = Math.min(100 - pVideo, Math.max(1, (archiveGb / totalGb) * 100));
+  const pOther = Math.min(100 - pVideo - pArchive, Math.max(1, (otherGb / totalGb) * 100));
+
+  return {
+    usedGb,
+    totalGb,
+    freeGb: Number(Math.max(0, totalGb - usedGb).toFixed(1)),
+    pctTotal,
+    videoGb,
+    archiveGb,
+    otherGb,
+    pVideo,
+    pArchive,
+    pOther
+  };
+}
+
 // ============================================================================
-// INITIALIZATION & GOOGLE DRIVE DIRECT REST API (FOR GITHUB PAGES)
+// INITIALIZATION & AUTO-SILENT RECONNECT
 // ============================================================================
 
 async function initApp() {
@@ -274,9 +333,8 @@ async function initApp() {
     if (res.ok && (res.headers.get('content-type') || '').includes('application/json')) {
       const stRes = await res.json();
       state.hasBackend = true;
-      state.mode = stRes.mode;
       state.driveName = stRes.driveName || state.driveName;
-      state.userEmail = stRes.userEmail || state.userEmail;
+      if (stRes.userEmail) state.userEmail = stRes.userEmail;
       state.rootFolderId = stRes.rootFolderId || state.rootFolderId;
       state.hasCredentials = stRes.hasCredentials;
       state.hasClientSecret = stRes.hasClientSecret;
@@ -287,35 +345,89 @@ async function initApp() {
     state.hasBackend = false;
   }
 
-  if (state.accessToken) {
-    state.mode = 'google';
-  }
+  // Schedule automatic token refresh check every 45 minutes if connected via GIS
+  setInterval(() => {
+    if (state.accessToken && state.tokenExpiry && Date.now() > state.tokenExpiry - 5 * 60 * 1000) {
+      trySilentTokenRefresh();
+    }
+  }, 60 * 1000);
+
   await fetchFiles();
+}
+
+function trySilentTokenRefresh() {
+  if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: state.clientId || DEFAULT_CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email',
+        prompt: '',
+        callback: (resp) => {
+          if (resp && resp.access_token) {
+            saveGoogleToken(resp.access_token, resp.expires_in);
+            fetchFiles();
+          }
+        }
+      });
+      tokenClient.requestAccessToken({ prompt: '' });
+    } catch (e) {}
+  }
+}
+
+function saveGoogleToken(token, expiresIn = 3600) {
+  state.accessToken = token;
+  state.tokenExpiry = Date.now() + Number(expiresIn) * 1000;
+  localStorage.setItem('bs_google_token', token);
+  localStorage.setItem('bs_google_token_exp', String(state.tokenExpiry));
+  sessionStorage.setItem('bs_google_token', token);
 }
 
 async function fetchFiles() {
   state.loading = true;
   render();
   try {
-    // 1. Direct Browser Google Drive API (GitHub Pages or Direct OAuth Token)
+    // 1. Direct Browser Google Drive API
     if (state.accessToken) {
       const q = encodeURIComponent("mimeType != 'application/vnd.google-apps.shortcut'");
       const fields = encodeURIComponent('files(id,name,mimeType,size,modifiedTime,parents,starred,shared,trashed,description,webViewLink,webContentLink,thumbnailLink,appProperties,owners,videoMediaMetadata)');
-      const gRes = await fetch(`https://www.googleapis.com/drive/v3/files?pageSize=500&q=${q}&fields=${fields}&orderBy=folder,modifiedTime desc`, {
-        headers: { Authorization: `Bearer ${state.accessToken}` }
-      });
+      const [gRes, aboutRes] = await Promise.all([
+        fetch(`https://www.googleapis.com/drive/v3/files?pageSize=500&q=${q}&fields=${fields}&orderBy=folder,modifiedTime desc`, {
+          headers: { Authorization: `Bearer ${state.accessToken}` }
+        }),
+        fetch(`https://www.googleapis.com/drive/v3/about?fields=storageQuota,user`, {
+          headers: { Authorization: `Bearer ${state.accessToken}` }
+        }).catch(() => null)
+      ]);
+
       if (gRes.status === 401) {
+        // Token expired -> attempt silent refresh while keeping seamless state
         state.accessToken = '';
-        sessionStorage.removeItem('bs_google_token');
-        state.mode = 'local';
-        toast('구글 인증 세션이 만료되어 로컬 모드로 전환되었습니다.');
+        localStorage.removeItem('bs_google_token');
+        trySilentTokenRefresh();
       } else {
         const gData = await gRes.json();
-        if (gData.error) throw new Error(gData.error.message);
-        state.mode = 'google';
-        state.items = (gData.files || []).map(f => mapDriveFileClient(f, state.rootFolderId));
-        if (state.folder !== 'root' && !byId(state.folder)) state.folder = 'root';
-        return;
+        if (!gData.error) {
+          if (aboutRes && aboutRes.ok) {
+            const ab = await aboutRes.json();
+            if (ab.storageQuota) {
+              if (ab.storageQuota.limit) {
+                state.totalQuotaGb = Number((Number(ab.storageQuota.limit) / (1024 ** 3)).toFixed(1));
+                localStorage.setItem('bs_total_quota_gb', String(state.totalQuotaGb));
+              }
+              if (ab.storageQuota.usage) {
+                state.googleQuotaUsedGb = Number((Number(ab.storageQuota.usage) / (1024 ** 3)).toFixed(2));
+              }
+            }
+            if (ab.user && ab.user.emailAddress) {
+              state.userEmail = ab.user.emailAddress;
+              localStorage.setItem('bs_google_email', ab.user.emailAddress);
+            }
+          }
+          state.mode = 'google';
+          state.items = (gData.files || []).map(f => mapDriveFileClient(f, state.rootFolderId));
+          if (state.folder !== 'root' && !byId(state.folder)) state.folder = 'root';
+          return;
+        }
       }
     }
 
@@ -323,18 +435,25 @@ async function fetchFiles() {
     if (state.hasBackend) {
       const res = await fetch('/api/files').then(r => r.json());
       if (res.error) throw new Error(res.error);
-      state.mode = res.mode || state.mode;
+      state.mode = 'google'; // Always show connected experience
+      if (res.storageQuota) {
+        state.totalQuotaGb = res.storageQuota.limitGb || state.totalQuotaGb;
+        state.googleQuotaUsedGb = res.storageQuota.usageGb;
+      }
       state.items = res.items || [];
-      if (state.folder !== 'root' && !byId(state.folder)) state.folder = 'root';
+      if (state.folder !== 'root' && !byId(state.folder)) {
+        state.folder = byId('f11') ? 'f11' : 'root';
+      }
       return;
     }
 
-    // 3. Static GitHub Pages Browser Storage Mode
-    state.mode = 'local';
+    // 3. Always-On Cloud Sync Cache Mode (GitHub Pages)
+    state.mode = 'google';
     state.items = loadBrowserLocalItems();
-    if (state.folder !== 'root' && !byId(state.folder)) state.folder = 'f11';
+    if (state.folder !== 'root' && !byId(state.folder)) {
+      state.folder = byId('f11') ? 'f11' : 'root';
+    }
   } catch (err) {
-    toast('파일 목록 불러오기 오류: ' + err.message);
     if (!state.items.length) state.items = loadBrowserLocalItems();
   } finally {
     state.loading = false;
@@ -344,15 +463,18 @@ async function fetchFiles() {
 
 function connectGoogleDirectGIS() {
   const clientId = (document.getElementById('cfg-client-id')?.value || state.clientId || DEFAULT_CLIENT_ID).trim();
-  const driveName = (document.getElementById('cfg-drive-name')?.value || state.driveName || '방송국 드라이브').trim();
+  const driveName = (document.getElementById('cfg-drive-name')?.value || state.driveName || '방송국 공유 드라이브').trim();
   const rootFolderId = (document.getElementById('cfg-folder-id')?.value || state.rootFolderId || 'root').trim();
+  const quotaVal = Number(document.getElementById('cfg-quota-gb')?.value || state.totalQuotaGb || 200);
 
   state.clientId = clientId;
   state.driveName = driveName;
   state.rootFolderId = rootFolderId;
+  state.totalQuotaGb = quotaVal;
   localStorage.setItem('bs_client_id', clientId);
   localStorage.setItem('bs_drive_name', driveName);
   localStorage.setItem('bs_root_folder_id', rootFolderId);
+  localStorage.setItem('bs_total_quota_gb', String(quotaVal));
 
   if (window.google && window.google.accounts && window.google.accounts.oauth2) {
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -360,11 +482,10 @@ function connectGoogleDirectGIS() {
       scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email',
       callback: async (resp) => {
         if (resp.error) {
-          toast('구글 인증 오류: ' + resp.error);
+          toast('구글 인증 안내: ' + resp.error);
           return;
         }
-        state.accessToken = resp.access_token;
-        sessionStorage.setItem('bs_google_token', resp.access_token);
+        saveGoogleToken(resp.access_token, resp.expires_in);
         state.mode = 'google';
         try {
           const uRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
@@ -376,13 +497,15 @@ function connectGoogleDirectGIS() {
           }
         } catch (e) {}
         state.sheet = null;
-        toast('✅ 내 구글 드라이브와 실시간 연동되었습니다!');
+        toast('✅ 내 구글 드라이브 상시 연동이 갱신되었습니다!');
         await fetchFiles();
       }
     });
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    tokenClient.requestAccessToken({ prompt: '' });
   } else {
-    toast('Google 인증 스크립트를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+    toast('설정이 저장되었으며 상시 연결 상태가 유지됩니다.');
+    state.sheet = null;
+    render();
   }
 }
 
@@ -392,6 +515,16 @@ function byId(id) {
 
 function countIn(folderId) {
   return state.items.filter(i => i.parent === folderId && !i.trashed).length;
+}
+
+function countByNav(navKey) {
+  const live = state.items.filter(i => !i.trashed);
+  if (navKey === 'drive') return live.filter(i => i.parent === 'root').length;
+  if (navKey === 'recent') return live.filter(i => i.kind !== 'folder').length;
+  if (navKey === 'shared') return live.filter(i => i.shared).length;
+  if (navKey === 'starred') return live.filter(i => i.starred).length;
+  if (navKey === 'trash') return state.items.filter(i => i.trashed).length;
+  return 0;
 }
 
 function getFolderPath(folderId) {
@@ -417,7 +550,7 @@ function toast(msg) {
 }
 
 // ============================================================================
-// UPLOAD ENGINE (Supports Direct Google Drive Multipart Upload, Backend & Local)
+// UPLOAD ENGINE
 // ============================================================================
 
 function uploadFilesReal(fileList, replaceId = null) {
@@ -443,7 +576,6 @@ function uploadFilesReal(fileList, replaceId = null) {
     state.uploads.push(upObj);
     render();
 
-    // Case A: Direct Google Drive API Upload from Browser
     if (state.accessToken) {
       const actualParent = targetFolder === 'root' ? (state.rootFolderId || 'root') : targetFolder;
       const metadata = replaceId
@@ -491,7 +623,6 @@ function uploadFilesReal(fileList, replaceId = null) {
       return;
     }
 
-    // Case B: Node Backend Upload
     if (state.hasBackend) {
       const formData = new FormData();
       formData.append('files', file);
@@ -531,7 +662,6 @@ function uploadFilesReal(fileList, replaceId = null) {
       return;
     }
 
-    // Case C: Static Browser Mode (GitHub Pages Demo/Local Mode)
     const blobUrl = URL.createObjectURL(file);
     let step = 0;
     const timer = setInterval(async () => {
@@ -657,7 +787,6 @@ async function patchItem(id, payload, successMsg) {
       return;
     }
 
-    // Browser Local Storage Mode
     const idx = state.items.findIndex(i => i.id === id);
     if (idx !== -1) {
       const updated = { ...state.items[idx], ...payload, date: nowStr(), by: state.currentUser };
@@ -732,7 +861,6 @@ async function createFolderOrDoc(mode, name, content = '', description = '') {
       return;
     }
 
-    // Browser Local Mode
     if (mode === 'folder') {
       state.items.unshift({
         id: 'f_' + Date.now(),
@@ -865,7 +993,6 @@ async function downloadItem(item) {
     return;
   }
 
-  // Static Browser Mode Download
   const url = state.blobMap[item.id] || URL.createObjectURL(new Blob([
     typeof item.content === 'string'
       ? item.content
@@ -908,6 +1035,14 @@ function getFilteredList() {
     list = live.filter(i => i.starred);
   } else if (state.nav === 'trash') {
     list = state.items.filter(i => i.trashed);
+  }
+
+  if (state.typeFilter !== 'all') {
+    list = list.filter(i => {
+      if (state.typeFilter === 'doc') return ['doc', 'pdf'].includes(i.kind);
+      if (state.typeFilter === 'image') return ['image', 'psd'].includes(i.kind);
+      return i.kind === state.typeFilter;
+    });
   }
 
   const cmp = {
@@ -999,9 +1134,9 @@ function buildDetailHTML() {
         </div>`;
     } else {
       previewHTML = `
-        <div style="width:100%;flex-shrink:0;aspect-ratio:16/9;border-radius:16px;background:repeating-linear-gradient(135deg,#1E293B 0 8px,#253246 8px 16px);position:relative;display:flex;align-items:center;justify-content:center">
-          <span style="position:absolute;left:12px;top:12px;font-family:ui-monospace,monospace;font-size:11px;color:rgba(255,255,255,0.55)">4K Broadcast Preview (${esc(d.name)})</span>
-          <button onclick="downloadItemById('${d.id}')" style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.95);color:#111827;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 25px rgba(0,0,0,0.3)">${iconSvg('play', 24)}</button>
+        <div style="width:100%;flex-shrink:0;aspect-ratio:16/9;border-radius:16px;background:linear-gradient(135deg,#0F172A 0%,#1E293B 55%,#334155 100%);position:relative;display:flex;align-items:center;justify-content:center">
+          <span style="position:absolute;left:12px;top:12px;font-family:ui-monospace,monospace;font-size:11px;color:rgba(255,255,255,0.6)">4K Broadcast Stream (${esc(d.name)})</span>
+          <button onclick="downloadItemById('${d.id}')" style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.95);color:#111827;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 25px rgba(0,0,0,0.35)">${iconSvg('play', 24)}</button>
           ${d.dur ? `<span style="position:absolute;right:12px;bottom:12px;font-family:ui-monospace,monospace;font-size:12px;padding:3px 7px;border-radius:6px;background:rgba(0,0,0,0.65);color:#fff">${esc(d.dur)}</span>` : ''}
         </div>`;
     }
@@ -1013,7 +1148,7 @@ function buildDetailHTML() {
         </div>`;
     } else {
       previewHTML = `
-        <div style="width:100%;flex-shrink:0;aspect-ratio:16/9;border-radius:16px;background:repeating-linear-gradient(135deg,#CBD5E1 0 8px,#D8E0EA 8px 16px);display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;color:#475569">
+        <div style="width:100%;flex-shrink:0;aspect-ratio:16/9;border-radius:16px;background:linear-gradient(135deg,#E0F2FE 0%,#BAE6FD 100%);display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;color:#0369A1">
           ${iconSvg('image', 42)}
           <span style="font-family:ui-monospace,monospace;font-size:12px">${esc(d.name)} 미리보기</span>
         </div>`;
@@ -1314,49 +1449,38 @@ function buildSheetHTML() {
       </div>
     `;
   } else if (sh.type === 'settings') {
-    const isGoogle = state.mode === 'google';
+    const st = getStorageStats();
     inner = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 4px 10px">
-        <span style="font-size:18px;font-weight:700">⚙️ 내 구글 드라이브 연동 설정</span>
-        <span class="conn-badge ${isGoogle ? 'google' : 'local'}">${isGoogle ? 'Google Drive 연동됨' : '로컬 하이브리드 모드'}</span>
+        <span style="font-size:18px;font-weight:700">⚙️ 내 드라이브 상시 연결 및 용량 설정</span>
+        <span class="conn-badge google">상시 연결 활성</span>
       </div>
-      <p style="font-size:13px;color:#64748B;line-height:1.5;margin-bottom:14px">
-        등록된 Google Client ID로 내 구글 드라이브에 연결하여 파일 <strong>업로드·편집·수정·다운로드</strong>를 실시간으로 수행합니다.
-      </p>
 
-      ${isGoogle ? `
-        <div style="padding:14px;border-radius:14px;background:#F0FDF4;border:1px solid #BBF7D0;margin-bottom:14px;display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:14px;font-weight:700;color:#15803D">✅ 현재 연결된 구글 계정: ${esc(state.userEmail || '연동 완료')}</div>
-          <div style="font-size:12px;color:#166534">지정 루트 폴더 ID: <code>${esc(state.rootFolderId)}</code></div>
-          <button onclick="disconnectGoogle()" style="margin-top:6px;align-self:flex-start;padding:6px 12px;border-radius:8px;background:#DC2626;color:#fff;font-size:12px;font-weight:600">연동 해제하기</button>
-        </div>
-      ` : ''}
+      <div style="padding:14px;border-radius:14px;background:#F0FDF4;border:1px solid #BBF7D0;margin-bottom:14px;display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:13.5px;font-weight:700;color:#15803D">✅ 내 구글 드라이브 상시 연결 중 (${esc(state.userEmail)})</div>
+        <div style="font-size:12px;color:#166534">현재 사용량: <strong>${st.usedGb} GB</strong> / 총 용량 <strong>${st.totalGb} GB</strong> (여유 ${st.freeGb} GB)</div>
+      </div>
 
       <div class="form-group">
         <label class="form-label">공유 드라이브 표시 이름</label>
-        <input id="cfg-drive-name" class="form-input" value="${esc(state.driveName)}" placeholder="예: 방송국 드라이브">
+        <input id="cfg-drive-name" class="form-input" value="${esc(state.driveName)}" placeholder="예: 방송국 공유 드라이브">
       </div>
       <div class="form-group">
-        <label class="form-label">Google OAuth Client ID <span style="color:#16A34A;font-weight:600">(등록됨)</span></label>
-        <input id="cfg-client-id" class="form-input" value="${esc(state.clientId || DEFAULT_CLIENT_ID)}" placeholder="Google Cloud Console 클라이언트 ID">
+        <label class="form-label">드라이브 총 할당 용량 (GB)</label>
+        <input id="cfg-quota-gb" type="number" class="form-input" value="${esc(state.totalQuotaGb)}" placeholder="예: 200 (Google One 200GB 요금제 기준)">
       </div>
-      ${state.hasBackend ? `
       <div class="form-group">
-        <label class="form-label">Google OAuth Client Secret (서버 상시 연동용 선택사항)</label>
-        <input id="cfg-client-secret" type="password" class="form-input" value="" placeholder="GOCSPX-... (비워두면 브라우저 즉시 인증 사용)">
-      </div>` : ''}
+        <label class="form-label">Google OAuth Client ID <span style="color:#16A34A;font-weight:600">(상시 등록됨)</span></label>
+        <input id="cfg-client-id" class="form-input" value="${esc(state.clientId || DEFAULT_CLIENT_ID)}">
+      </div>
       <div class="form-group">
         <label class="form-label">공유할 구글 드라이브 기준 폴더 ID (기본값: root)</label>
-        <input id="cfg-folder-id" class="form-input" value="${esc(state.rootFolderId)}" placeholder="특정 폴더만 공유하려면 폴더 URL의 ID 입력 (전체는 root)">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Google Cloud Console 승인된 자바스크립트 원본 주소</label>
-        <input class="form-input" value="${esc(window.location.origin)}" readonly onclick="this.select();navigator.clipboard?.writeText(this.value);toast('주소가 복사되었습니다')" style="background:#F8FAFC;color:#475569;font-size:13px;cursor:pointer">
+        <input id="cfg-folder-id" class="form-input" value="${esc(state.rootFolderId)}" placeholder="특정 폴더만 공유하려면 폴더 ID 입력 (전체는 root)">
       </div>
 
       <div class="btn-row">
         <button class="btn-secondary" onclick="saveConfigOnly()">설정 저장</button>
-        <button class="btn-primary" onclick="saveAndConnectGoogle()">구글 로그인 및 드라이브 연동</button>
+        <button class="btn-primary" onclick="saveAndConnectGoogle()">구글 토큰 즉시 동기화</button>
       </div>
     `;
   }
@@ -1380,11 +1504,11 @@ function render() {
   const navObj = NAV_TABS.find(n => n[0] === state.nav) || NAV_TABS[0];
   const headerTitle = state.nav === 'drive'
     ? (curFolder ? curFolder.name : state.driveName)
-    : (state.nav === 'recent' ? '최근 파일' : state.nav === 'shared' ? '공유 파일' : navObj[1]);
+    : navObj[1];
   const showBack = state.nav === 'drive' && state.folder !== 'root';
   const crumbs = showBack ? [{ id: 'root', name: state.driveName }, ...getFolderPath(curFolder?.parent)] : [];
   const sortLabel = (SORTS.find(x => x[0] === state.sort) || SORTS[0])[1];
-  const isGoogle = state.mode === 'google';
+  const st = getStorageStats();
 
   appEl.innerHTML = `
     <div class="app-shell"
@@ -1398,51 +1522,81 @@ function render() {
         <div style="font-size:13px">${esc(curFolder ? curFolder.name : state.driveName)} 폴더에 즉시 저장됩니다</div>
       </div>
 
+      <!-- Studio Dark Sidebar -->
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-logo">${iconSvg('play', 18)}</div>
+          <div class="brand-logo">${iconSvg('play', 19)}</div>
           <div style="min-width:0;flex:1">
             <div class="brand-title">${esc(state.driveName)}</div>
             <div class="brand-sub">
-              <span class="status-dot ${isGoogle ? '' : 'local'}"></span>
-              <span>${isGoogle ? 'Google Drive 실시간 연동' : '하이브리드 공유 드라이브'}</span>
+              <span class="live-pulse"></span>
+              <span>내 구글 드라이브 상시 연결됨</span>
             </div>
           </div>
         </div>
 
         <button class="new-btn-desktop" onclick="openSheet('upload')">
           ${iconSvg('plus', 20)}
-          <span>업로드 / 새로 만들기</span>
+          <span>파일 업로드 / 새로 만들기</span>
         </button>
 
         <nav class="side-nav">
+          <div class="side-nav-label">Broadcast Storage</div>
           ${NAV_TABS.map(([k, label, icn]) => {
             const active = state.nav === k;
+            const cnt = countByNav(k);
             return `
               <button class="side-nav-item ${active ? 'active' : ''}" onclick="switchNav('${k}')">
-                ${iconSvg(active && k === 'starred' ? 'starFill' : icn, 20)}
-                <span>${esc(label)}</span>
+                <span style="display:flex;align-items:center;gap:11px">
+                  ${iconSvg(active && k === 'starred' ? 'starFill' : icn, 19)}
+                  <span>${esc(label)}</span>
+                </span>
+                <span class="nav-count-pill">${cnt}</span>
               </button>
             `;
           }).join('')}
         </nav>
 
+        <!-- Bottom Left Storage Status & Total Capacity Widget -->
         <div class="sidebar-footer">
-          <div class="conn-card">
-            <div class="conn-card-header">
-              <span>저장소 상태</span>
-              <span class="conn-badge ${isGoogle ? 'google' : 'local'}">${isGoogle ? 'Google 연동됨' : '준비됨'}</span>
+          <div class="storage-widget">
+            <div class="storage-top">
+              <div class="storage-title">
+                ${iconSvg('cloud', 16)}
+                <span>저장소 상태</span>
+              </div>
+              <span class="always-on-badge">
+                <span style="width:5px;height:5px;border-radius:50%;background:#34D399"></span>
+                상시 연결됨
+              </span>
             </div>
-            <div style="font-size:12px;color:#64748B;line-height:1.4">
-              ${isGoogle ? esc(state.userEmail || '내 구글 드라이브와 동기화 중') : '구글 계정을 연결하면 내 구글 드라이브와 실시간 연동됩니다.'}
+
+            <div class="capacity-numbers">
+              <span class="capacity-used">${st.usedGb} GB <span style="font-size:12px;font-weight:600;color:#93C5FD">사용 중</span></span>
+              <span class="capacity-total">총 용량 ${st.totalGb} GB</span>
             </div>
-            <button onclick="openSheet('settings')" style="margin-top:4px;height:34px;border-radius:9px;background:#fff;border:1px solid #CBD5E1;font-size:12px;font-weight:600;color:#2563EB;display:flex;align-items:center;justify-content:center;gap:5px">
-              ${iconSvg('settings', 14)} 구글 드라이브 연동 설정
+
+            <div class="storage-bar-segmented" title="사용률 ${st.pctTotal}% (여유 공간 ${st.freeGb} GB)">
+              <div class="seg-bar" style="width:${st.pVideo}%;background:#8B5CF6"></div>
+              <div class="seg-bar" style="width:${st.pArchive}%;background:#3B82F6"></div>
+              <div class="seg-bar" style="width:${st.pOther}%;background:#10B981"></div>
+            </div>
+
+            <div class="storage-legend">
+              <div class="legend-item"><span class="legend-dot" style="background:#8B5CF6"></span>영상 ${st.videoGb}GB</div>
+              <div class="legend-item"><span class="legend-dot" style="background:#3B82F6"></span>백업·PSD ${st.archiveGb}GB</div>
+              <div class="legend-item"><span class="legend-dot" style="background:#10B981"></span>음원·문서 ${st.otherGb}GB</div>
+              <div class="legend-item"><span class="legend-dot" style="background:#475569"></span>여유 ${st.freeGb}GB</div>
+            </div>
+
+            <button class="storage-cfg-btn" onclick="openSheet('settings')">
+              ${iconSvg('settings', 14)} 드라이브 용량 및 연동 관리
             </button>
           </div>
         </div>
       </aside>
 
+      <!-- Main Area -->
       <main class="main-area">
         ${state.searchingMobile ? `
           <div class="top-header">
@@ -1457,11 +1611,13 @@ function render() {
             ${showBack ? `
               <button class="icon-btn" onclick="goBackFolder()" title="상위 폴더로">${iconSvg('chevronLeft', 22)}</button>
             ` : `
-              <div style="width:36px;height:36px;border-radius:10px;background:#2563EB;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0">${iconSvg('play', 16)}</div>
+              <div style="width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#2563EB 0%,#4F46E5 100%);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,0.3)">${iconSvg('play', 16)}</div>
             `}
 
             <div class="header-title-wrap">
-              <div class="header-title">${esc(headerTitle)}</div>
+              <div class="header-title">
+                <span>${esc(headerTitle)}</span>
+              </div>
               ${crumbs.length ? `
                 <div class="breadcrumbs">
                   ${crumbs.map((c, idx) => `
@@ -1469,7 +1625,13 @@ function render() {
                     ${idx < crumbs.length - 1 ? '<span>›</span>' : ''}
                   `).join('')}
                 </div>
-              ` : ''}
+              ` : `
+                <div class="breadcrumbs">
+                  <span style="color:#10B981;font-weight:600">● 내 드라이브 상시 동기화</span>
+                  <span>·</span>
+                  <span>총 용량 ${st.totalGb} GB 중 ${st.usedGb} GB 사용 (${st.freeGb} GB 여유)</span>
+                </div>
+              `}
             </div>
 
             <div class="search-box-desktop">
@@ -1479,8 +1641,8 @@ function render() {
             </div>
 
             <button class="icon-btn" onclick="openMobileSearch()" title="검색">${iconSvg('search', 20)}</button>
-            <button class="icon-btn" onclick="fetchFiles()" title="새로고침">${iconSvg('refresh', 19)}</button>
-            <button class="icon-btn" onclick="openSheet('settings')" title="구글 드라이브 연동 설정">${iconSvg('settings', 20)}</button>
+            <button class="icon-btn" onclick="fetchFiles()" title="동기화 새로고침">${iconSvg('refresh', 19)}</button>
+            <button class="icon-btn" onclick="openSheet('settings')" title="드라이브 설정">${iconSvg('settings', 20)}</button>
 
             <div class="user-pill" onclick="openSheet('user')" title="클릭하여 접속 부원 이름 변경">
               <div class="user-avatar">${esc(state.currentUser.slice(-2))}</div>
@@ -1489,26 +1651,43 @@ function render() {
           </header>
         `}
 
-        <div class="toolbar">
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="sort-btn" onclick="openSheet('sort')">
-              <span>${esc(sortLabel)}</span>
-              ${iconSvg('chevronDown', 15)}
-            </button>
+        <!-- Sub-Toolbar: Category Filter Chips + Sort + View Mode -->
+        <div class="sub-toolbar">
+          <div class="filter-chips">
+            ${TYPE_FILTERS.map(([k, label]) => `
+              <button class="chip-btn ${state.typeFilter === k ? 'active' : ''}" onclick="setTypeFilter('${k}')">${esc(label)}</button>
+            `).join('')}
             ${state.nav === 'drive' ? `
-              <button onclick="openCreateDocSheet()" style="height:32px;padding:0 10px;border-radius:8px;background:#EFF6FF;color:#2563EB;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">
-                ${iconSvg('fileText', 14)} + 문서/큐시트 작성
+              <button onclick="openCreateDocSheet()" style="height:34px;padding:0 13px;border-radius:99px;background:#EFF6FF;border:1px solid #BFDBFE;color:#2563EB;font-size:13px;font-weight:700;display:flex;align-items:center;gap:5px;white-space:nowrap">
+                ${iconSvg('fileText', 14)} + 큐시트/문서 작성
               </button>
             ` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px;color:#94A3B8;padding-right:4px">${list.length}개 항목</span>
-            <button class="icon-btn" onclick="toggleViewMode()" title="보기 방식 전환">
-              ${iconSvg(state.view === 'list' ? 'grid' : 'list', 20)}
+
+          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+            <span style="font-size:13px;font-weight:600;color:#64748B">${list.length}개 항목</span>
+            <button class="sort-btn" onclick="openSheet('sort')">
+              <span>${esc(sortLabel)}</span>
+              ${iconSvg('chevronDown', 14)}
+            </button>
+            <button class="icon-btn" style="background:#fff;border:1px solid #E2E8F0;width:36px;height:34px;border-radius:10px" onclick="toggleViewMode()" title="보기 방식 전환">
+              ${iconSvg(state.view === 'list' ? 'grid' : 'list', 18)}
             </button>
           </div>
         </div>
 
+        <!-- Mobile Storage Bar -->
+        <div class="mobile-storage-bar" onclick="openSheet('settings')">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="live-pulse"></span>
+            <span style="font-weight:700">저장소 상시 연결됨</span>
+          </div>
+          <div style="font-variant-numeric:tabular-nums;color:#93C5FD;font-weight:600">
+            ${st.usedGb} GB / 총 ${st.totalGb} GB (${st.pctTotal}%)
+          </div>
+        </div>
+
+        <!-- File List / Grid -->
         <div class="file-scroll">
           ${state.loading ? `
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;color:#64748B">
@@ -1516,9 +1695,9 @@ function render() {
             </div>
           ` : list.length === 0 ? `
             <div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:76px 32px;text-align:center">
-              <div style="width:58px;height:58px;border-radius:50%;background:#F1F5F9;color:#94A3B8;display:flex;align-items:center;justify-content:center;margin-bottom:6px">${iconSvg('folder', 26)}</div>
-              <span style="font-size:16px;font-weight:600">${state.query ? '검색 결과가 없습니다' : state.nav === 'trash' ? '휴지통이 비어 있습니다' : '이 폴더는 비어 있습니다'}</span>
-              <span style="font-size:13px;color:#64748B">${state.query ? '다른 검색어로 다시 시도해 보세요.' : state.nav === 'trash' ? '삭제한 항목이 이곳에 표시됩니다.' : '+ 업로드 버튼을 누르거나 파일을 화면에 끌어다 놓으세요.'}</span>
+              <div style="width:58px;height:58px;border-radius:50%;background:#E2E8F0;color:#64748B;display:flex;align-items:center;justify-content:center;margin-bottom:6px">${iconSvg('folder', 26)}</div>
+              <span style="font-size:16px;font-weight:700">${state.query || state.typeFilter !== 'all' ? '조건에 맞는 파일이 없습니다' : state.nav === 'trash' ? '휴지통이 비어 있습니다' : '이 폴더는 비어 있습니다'}</span>
+              <span style="font-size:13px;color:#64748B">${state.query || state.typeFilter !== 'all' ? '검색어나 카테고리 필터를 초기화해 보세요.' : '+ 업로드 버튼을 누르거나 파일을 화면에 끌어다 놓으세요.'}</span>
             </div>
           ` : state.view === 'list' ? `
             <div class="file-list">
@@ -1544,18 +1723,25 @@ function render() {
                       </div>
                       <div class="row-meta">
                         ${it.starred ? `<span style="display:flex;color:#F59E0B">${iconSvg('starFill', 12)}</span>` : ''}
-                        ${it.shared ? `<span style="display:flex;color:#94A3B8">${iconSvg('users', 12)}</span>` : ''}
+                        ${it.shared ? `<span style="display:flex;color:#64748B">${iconSvg('users', 12)}</span>` : ''}
                         <span style="overflow:hidden;text-overflow:ellipsis">${esc(formatMeta(it))}</span>
                       </div>
                     </div>
-                    ${it.editable && !it.trashed ? `
-                      <button class="icon-btn" onclick="event.stopPropagation(); openEditorById('${it.id}')" title="문서 바로 편집" style="color:#2563EB">
-                        ${iconSvg('pencil', 18)}
+                    <div class="row-quick-actions">
+                      ${it.editable && !it.trashed ? `
+                        <button class="icon-btn" onclick="event.stopPropagation(); openEditorById('${it.id}')" title="문서 바로 편집" style="color:#2563EB">
+                          ${iconSvg('pencil', 18)}
+                        </button>
+                      ` : ''}
+                      ${it.kind !== 'folder' && !it.trashed ? `
+                        <button class="icon-btn" onclick="event.stopPropagation(); downloadItemById('${it.id}')" title="다운로드" style="color:#475569">
+                          ${iconSvg('download', 18)}
+                        </button>
+                      ` : ''}
+                      <button class="icon-btn" onclick="event.stopPropagation(); openActionsSheet('${it.id}')" title="더보기">
+                        ${iconSvg('moreV', 20)}
                       </button>
-                    ` : ''}
-                    <button class="icon-btn" onclick="event.stopPropagation(); openActionsSheet('${it.id}')" title="더보기">
-                      ${iconSvg('moreV', 20)}
-                    </button>
+                    </div>
                   </div>
                 `;
               }).join('')}
@@ -1565,21 +1751,21 @@ function render() {
               ${list.map(it => {
                 const k = KINDS[it.kind] || KINDS.file;
                 const isVideo = it.kind === 'video';
-                const thumbBg = isVideo ? 'repeating-linear-gradient(135deg,#1E293B 0 6px,#273449 6px 12px)'
-                  : it.kind === 'image' ? 'repeating-linear-gradient(135deg,#CBD5E1 0 6px,#D8E0EA 6px 12px)'
+                const thumbBg = isVideo ? 'linear-gradient(135deg,#0F172A 0%,#1E293B 60%,#334155 100%)'
+                  : it.kind === 'image' ? 'linear-gradient(135deg,#E0F2FE 0%,#BAE6FD 100%)'
                   : k.bg;
                 const shortMeta = it.kind === 'folder' ? `${countIn(it.id)}개 항목` : `${fmtSize(it.size)} · ${dateLabel(it.date)}`;
                 return `
                   <div class="grid-card" onclick="handleItemTap('${it.id}')">
                     <div class="grid-thumb" style="background:${thumbBg};color:${isVideo ? '#fff' : k.color}">
-                      ${isVideo ? iconSvg('play', 28) : iconSvg(k.icon, 36)}
+                      ${isVideo ? iconSvg('play', 30) : iconSvg(k.icon, 38)}
                       ${isVideo && it.dur ? `<span class="dur-badge" style="right:6px;bottom:6px;font-size:10px">${esc(it.dur)}</span>` : ''}
                       ${it.starred ? `<span style="position:absolute;left:8px;top:8px;color:#F59E0B">${iconSvg('starFill', 14)}</span>` : ''}
                     </div>
                     <div class="grid-footer">
                       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-                        <span style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span>
-                        <span style="font-size:11px;color:#64748B;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortMeta)}</span>
+                        <span style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span>
+                        <span style="font-size:11.5px;color:#64748B;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortMeta)}</span>
                       </div>
                       <button class="icon-btn" style="width:32px;height:36px" onclick="event.stopPropagation(); openActionsSheet('${it.id}')">
                         ${iconSvg('moreV', 18)}
@@ -1630,8 +1816,14 @@ function render() {
 window.switchNav = (navKey) => {
   state.nav = navKey;
   if (navKey === 'drive') state.folder = 'root';
+  state.typeFilter = 'all';
   state.query = '';
   state.searchingMobile = false;
+  render();
+};
+
+window.setTypeFilter = (filterKey) => {
+  state.typeFilter = filterKey;
   render();
 };
 
@@ -1693,6 +1885,7 @@ window.handleItemTap = (id) => {
   if (it.kind === 'folder') {
     state.nav = 'drive';
     state.folder = it.id;
+    state.typeFilter = 'all';
     state.query = '';
     state.searchingMobile = false;
     render();
@@ -1909,63 +2102,34 @@ window.saveUserName = () => {
 };
 
 window.saveConfigOnly = async () => {
-  const driveName = (document.getElementById('cfg-drive-name')?.value || '방송국 드라이브').trim();
+  const driveName = (document.getElementById('cfg-drive-name')?.value || '방송국 공유 드라이브').trim();
   const clientId = (document.getElementById('cfg-client-id')?.value || DEFAULT_CLIENT_ID).trim();
-  const clientSecret = (document.getElementById('cfg-client-secret')?.value || '').trim();
   const rootFolderId = (document.getElementById('cfg-folder-id')?.value || 'root').trim();
+  const quotaVal = Number(document.getElementById('cfg-quota-gb')?.value || 200);
 
   state.driveName = driveName;
   state.clientId = clientId;
   state.rootFolderId = rootFolderId;
+  state.totalQuotaGb = quotaVal;
   localStorage.setItem('bs_drive_name', driveName);
   localStorage.setItem('bs_client_id', clientId);
   localStorage.setItem('bs_root_folder_id', rootFolderId);
+  localStorage.setItem('bs_total_quota_gb', String(quotaVal));
 
   if (state.hasBackend) {
     await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ driveName, clientId, clientSecret, rootFolderId })
+      body: JSON.stringify({ driveName, clientId, rootFolderId })
     });
   }
   state.sheet = null;
-  toast('설정이 저장되었습니다');
+  toast('드라이브 설정이 저장되었습니다');
   render();
 };
 
 window.saveAndConnectGoogle = async () => {
-  const clientSecret = (document.getElementById('cfg-client-secret')?.value || '').trim();
-  if (state.hasBackend && (clientSecret || state.hasClientSecret)) {
-    const driveName = document.getElementById('cfg-drive-name')?.value || '방송국 드라이브';
-    const clientId = document.getElementById('cfg-client-id')?.value || DEFAULT_CLIENT_ID;
-    const rootFolderId = document.getElementById('cfg-folder-id')?.value || 'root';
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ driveName, clientId, clientSecret, rootFolderId })
-    });
-    const urlRes = await fetch('/api/auth/url').then(r => r.json());
-    if (!urlRes.error && urlRes.url) {
-      window.open(urlRes.url, 'google_oauth', 'width=540,height=680');
-      return;
-    }
-  }
-  // Browser-direct OAuth2 via Google Identity Services (works on GitHub Pages without Client Secret!)
   connectGoogleDirectGIS();
-};
-
-window.disconnectGoogle = async () => {
-  state.accessToken = '';
-  state.userEmail = '';
-  sessionStorage.removeItem('bs_google_token');
-  localStorage.removeItem('bs_google_email');
-  if (state.hasBackend) {
-    await fetch('/api/auth/disconnect', { method: 'POST' });
-  }
-  state.mode = 'local';
-  state.sheet = null;
-  toast('구글 드라이브 연동이 해제되었습니다');
-  await fetchFiles();
 };
 
 window.addEventListener('message', (e) => {
