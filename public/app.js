@@ -5,6 +5,7 @@
 // ============================================================================
 
 const DEFAULT_CLIENT_ID = '533555779141-4l2im5ih2dou2b6omh0t07kh40soh196.apps.googleusercontent.com';
+const LOCKED_ROOT_FOLDER_ID = '1Sb255-QJM--dC_1YGzJax-VlqpWtAxif';
 
 const SVG_PATHS = {
   play: ['M6 3 20 12 6 21 6 3'],
@@ -192,7 +193,8 @@ function isEditableText(item) {
 
 function mapDriveFileClient(f, rootFolderId) {
   const kind = detectKind(f.name, f.mimeType);
-  const parentId = (f.parents && f.parents[0]) ? (f.parents[0] === rootFolderId ? 'root' : f.parents[0]) : 'root';
+  const rawParentId = (f.parents && f.parents[0]) ? f.parents[0] : null;
+  const parentId = rawParentId === rootFolderId ? 'root' : (rawParentId || 'external');
   const sizeMb = f.size ? Number(f.size) / (1024 * 1024) : 0;
   const props = f.appProperties || {};
   let dur = props.dur;
@@ -208,6 +210,7 @@ function mapDriveFileClient(f, rootFolderId) {
     kind,
     mimeType: f.mimeType,
     parent: parentId,
+    rawParentId,
     size: Number(sizeMb.toFixed(2)),
     date: isoToDateStr(f.modifiedTime),
     by: props.uploadedBy || (f.owners && f.owners[0] && f.owners[0].displayName) || '관리자',
@@ -224,8 +227,28 @@ function mapDriveFileClient(f, rootFolderId) {
   };
 }
 
+// Strictly keep only files & folders that belong inside LOCKED_ROOT_FOLDER_ID (and its subfolders)
+function filterStrictlyInsideRoot(mappedItems) {
+  const byIdMap = new Map(mappedItems.map(item => [item.id, item]));
+  const memo = new Map();
+  function isInside(item) {
+    if (!item || !item.rawParentId) return false;
+    if (memo.has(item.id)) return memo.get(item.id);
+    memo.set(item.id, false);
+    if (item.parent === 'root') {
+      memo.set(item.id, true);
+      return true;
+    }
+    const parentItem = byIdMap.get(item.parent);
+    const ok = parentItem ? isInside(parentItem) : false;
+    memo.set(item.id, ok);
+    return ok;
+  }
+  return mappedItems.filter(isInside);
+}
+
 // ============================================================================
-// STATE STORE (ALWAYS-CONNECTED CONFIGURATION)
+// STATE STORE (ALWAYS-CONNECTED & LOCKED FOLDER CONFIGURATION)
 // ============================================================================
 
 const state = {
@@ -234,7 +257,7 @@ const state = {
   mode: 'google',
   driveName: localStorage.getItem('bs_drive_name') || '방송국 공유 드라이브',
   userEmail: localStorage.getItem('bs_google_email') || 'Google Drive 상시 연결됨',
-  rootFolderId: localStorage.getItem('bs_root_folder_id') || 'root',
+  rootFolderId: LOCKED_ROOT_FOLDER_ID, // 지정된 폴더만 볼 수 있도록 고정 잠금
   clientId: localStorage.getItem('bs_client_id') || DEFAULT_CLIENT_ID,
   accessToken: localStorage.getItem('bs_google_token') || sessionStorage.getItem('bs_google_token') || '',
   tokenExpiry: Number(localStorage.getItem('bs_google_token_exp') || 0),
@@ -335,7 +358,7 @@ async function initApp() {
       state.hasBackend = true;
       state.driveName = stRes.driveName || state.driveName;
       if (stRes.userEmail) state.userEmail = stRes.userEmail;
-      state.rootFolderId = stRes.rootFolderId || state.rootFolderId;
+      state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
       state.hasCredentials = stRes.hasCredentials;
       state.hasClientSecret = stRes.hasClientSecret;
       state.clientId = stRes.clientId || state.clientId;
@@ -386,12 +409,12 @@ async function fetchFiles() {
   state.loading = true;
   render();
   try {
-    // 1. Direct Browser Google Drive API
+    // 1. Direct Browser Google Drive API (Strictly locked to LOCKED_ROOT_FOLDER_ID subtree)
     if (state.accessToken) {
       const q = encodeURIComponent("mimeType != 'application/vnd.google-apps.shortcut'");
       const fields = encodeURIComponent('files(id,name,mimeType,size,modifiedTime,parents,starred,shared,trashed,description,webViewLink,webContentLink,thumbnailLink,appProperties,owners,videoMediaMetadata)');
       const [gRes, aboutRes] = await Promise.all([
-        fetch(`https://www.googleapis.com/drive/v3/files?pageSize=500&q=${q}&fields=${fields}&orderBy=folder,modifiedTime desc`, {
+        fetch(`https://www.googleapis.com/drive/v3/files?pageSize=1000&q=${q}&fields=${fields}&orderBy=folder,modifiedTime desc`, {
           headers: { Authorization: `Bearer ${state.accessToken}` }
         }),
         fetch(`https://www.googleapis.com/drive/v3/about?fields=storageQuota,user`, {
@@ -424,7 +447,9 @@ async function fetchFiles() {
             }
           }
           state.mode = 'google';
-          state.items = (gData.files || []).map(f => mapDriveFileClient(f, state.rootFolderId));
+          state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
+          const allMapped = (gData.files || []).map(f => mapDriveFileClient(f, LOCKED_ROOT_FOLDER_ID));
+          state.items = filterStrictlyInsideRoot(allMapped);
           if (state.folder !== 'root' && !byId(state.folder)) state.folder = 'root';
           return;
         }
@@ -436,6 +461,7 @@ async function fetchFiles() {
       const res = await fetch('/api/files').then(r => r.json());
       if (res.error) throw new Error(res.error);
       state.mode = 'google'; // Always show connected experience
+      state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
       if (res.storageQuota) {
         state.totalQuotaGb = res.storageQuota.limitGb || state.totalQuotaGb;
         state.googleQuotaUsedGb = res.storageQuota.usageGb;
@@ -449,6 +475,7 @@ async function fetchFiles() {
 
     // 3. Always-On Cloud Sync Cache Mode (GitHub Pages)
     state.mode = 'google';
+    state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
     state.items = loadBrowserLocalItems();
     if (state.folder !== 'root' && !byId(state.folder)) {
       state.folder = byId('f11') ? 'f11' : 'root';
@@ -464,16 +491,16 @@ async function fetchFiles() {
 function connectGoogleDirectGIS() {
   const clientId = (document.getElementById('cfg-client-id')?.value || state.clientId || DEFAULT_CLIENT_ID).trim();
   const driveName = (document.getElementById('cfg-drive-name')?.value || state.driveName || '방송국 공유 드라이브').trim();
-  const rootFolderId = (document.getElementById('cfg-folder-id')?.value || state.rootFolderId || 'root').trim();
+  const rootFolderId = LOCKED_ROOT_FOLDER_ID;
   const quotaVal = Number(document.getElementById('cfg-quota-gb')?.value || state.totalQuotaGb || 200);
 
   state.clientId = clientId;
   state.driveName = driveName;
-  state.rootFolderId = rootFolderId;
+  state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
   state.totalQuotaGb = quotaVal;
   localStorage.setItem('bs_client_id', clientId);
   localStorage.setItem('bs_drive_name', driveName);
-  localStorage.setItem('bs_root_folder_id', rootFolderId);
+  localStorage.setItem('bs_root_folder_id', LOCKED_ROOT_FOLDER_ID);
   localStorage.setItem('bs_total_quota_gb', String(quotaVal));
 
   if (window.google && window.google.accounts && window.google.accounts.oauth2) {
@@ -1474,8 +1501,9 @@ function buildSheetHTML() {
         <input id="cfg-client-id" class="form-input" value="${esc(state.clientId || DEFAULT_CLIENT_ID)}">
       </div>
       <div class="form-group">
-        <label class="form-label">공유할 구글 드라이브 기준 폴더 ID (기본값: root)</label>
-        <input id="cfg-folder-id" class="form-input" value="${esc(state.rootFolderId)}" placeholder="특정 폴더만 공유하려면 폴더 ID 입력 (전체는 root)">
+        <label class="form-label">공유 지정 폴더 ID <span style="color:#DC2626;font-weight:700">(외부 폴더 차단 · 전용 폴더 고정 잠금)</span></label>
+        <input id="cfg-folder-id" class="form-input" value="${esc(LOCKED_ROOT_FOLDER_ID)}" readonly style="background:#F1F5F9;color:#475569;font-family:ui-monospace,monospace;cursor:not-allowed">
+        <div style="font-size:11.5px;color:#64748B;margin-top:4px">🔒 보안을 위해 지정된 구글 드라이브 폴더(<code>${esc(LOCKED_ROOT_FOLDER_ID)}</code>) 및 하위 항목만 표시되며 외부 폴더 접근은 완전 차단됩니다.</div>
       </div>
 
       <div class="btn-row">
@@ -2104,16 +2132,16 @@ window.saveUserName = () => {
 window.saveConfigOnly = async () => {
   const driveName = (document.getElementById('cfg-drive-name')?.value || '방송국 공유 드라이브').trim();
   const clientId = (document.getElementById('cfg-client-id')?.value || DEFAULT_CLIENT_ID).trim();
-  const rootFolderId = (document.getElementById('cfg-folder-id')?.value || 'root').trim();
+  const rootFolderId = LOCKED_ROOT_FOLDER_ID;
   const quotaVal = Number(document.getElementById('cfg-quota-gb')?.value || 200);
 
   state.driveName = driveName;
   state.clientId = clientId;
-  state.rootFolderId = rootFolderId;
+  state.rootFolderId = LOCKED_ROOT_FOLDER_ID;
   state.totalQuotaGb = quotaVal;
   localStorage.setItem('bs_drive_name', driveName);
   localStorage.setItem('bs_client_id', clientId);
-  localStorage.setItem('bs_root_folder_id', rootFolderId);
+  localStorage.setItem('bs_root_folder_id', LOCKED_ROOT_FOLDER_ID);
   localStorage.setItem('bs_total_quota_gb', String(quotaVal));
 
   if (state.hasBackend) {

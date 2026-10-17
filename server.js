@@ -38,6 +38,8 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 * 1024 } }); // Up to 10GB
 
+const LOCKED_ROOT_FOLDER_ID = '1Sb255-QJM--dC_1YGzJax-VlqpWtAxif';
+
 // Load / Save Config
 function loadConfig() {
   const defaultCfg = {
@@ -45,14 +47,15 @@ function loadConfig() {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
     redirectUri: process.env.GOOGLE_REDIRECT_URI || `http://localhost:${PORT}/api/oauth2callback`,
-    rootFolderId: process.env.GOOGLE_ROOT_FOLDER_ID || 'root',
+    rootFolderId: LOCKED_ROOT_FOLDER_ID,
     accessPin: process.env.ACCESS_PIN || '',
     tokens: null,
     userEmail: ''
   };
   if (fs.existsSync(CONFIG_FILE)) {
     try {
-      return { ...defaultCfg, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) };
+      const saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      return { ...defaultCfg, ...saved, rootFolderId: LOCKED_ROOT_FOLDER_ID };
     } catch (e) {
       return defaultCfg;
     }
@@ -61,6 +64,7 @@ function loadConfig() {
 }
 
 function saveConfig(cfg) {
+  cfg.rootFolderId = LOCKED_ROOT_FOLDER_ID;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
 }
 
@@ -172,7 +176,8 @@ function getDriveClient() {
 // Convert Google Drive File to App Item format
 function mapDriveFile(f, rootFolderId) {
   const kind = detectKind(f.name, f.mimeType);
-  const parentId = (f.parents && f.parents[0]) ? (f.parents[0] === rootFolderId ? 'root' : f.parents[0]) : 'root';
+  const rawParentId = (f.parents && f.parents[0]) ? f.parents[0] : null;
+  const parentId = rawParentId === rootFolderId ? 'root' : (rawParentId || 'external');
   const sizeMb = f.size ? Number(f.size) / (1024 * 1024) : 0;
   const props = f.appProperties || {};
   let dur = props.dur;
@@ -188,6 +193,7 @@ function mapDriveFile(f, rootFolderId) {
     kind,
     mimeType: f.mimeType,
     parent: parentId,
+    rawParentId,
     size: Number(sizeMb.toFixed(2)),
     date: isoToDateStr(f.modifiedTime),
     by: props.uploadedBy || (f.owners && f.owners[0] && f.owners[0].displayName) || '관리자',
@@ -314,24 +320,42 @@ app.post('/api/auth/disconnect', (req, res) => {
 // API ROUTES: FILES CRUD (GOOGLE DRIVE + LOCAL FALLBACK)
 // ============================================================================
 
-// 1. List all items (or folder contents)
+    // 1. List all items (strictly scoped to the designated rootFolderId subtree)
 app.get('/api/files', async (req, res) => {
   try {
+    const LOCKED_ROOT_ID = '1Sb255-QJM--dC_1YGzJax-VlqpWtAxif';
     const client = getDriveClient();
     if (client) {
-      const { drive, cfg } = client;
-      const rootId = cfg.rootFolderId || 'root';
-      // Fetch up to 500 files from the user's Google Drive + Storage Quota
+      const { drive } = client;
+      const rootId = LOCKED_ROOT_ID;
+      // Fetch files from the user's Google Drive + Storage Quota, then strictly filter to rootId subtree
       const [response, aboutRes] = await Promise.all([
         drive.files.list({
-          pageSize: 500,
+          pageSize: 1000,
           q: "mimeType != 'application/vnd.google-apps.shortcut'",
           fields: 'files(id, name, mimeType, size, modifiedTime, parents, starred, shared, trashed, description, webViewLink, webContentLink, thumbnailLink, appProperties, owners, videoMediaMetadata)',
           orderBy: 'folder,modifiedTime desc'
         }),
         drive.about.get({ fields: 'storageQuota,user' }).catch(() => ({ data: {} }))
       ]);
-      const files = (response.data.files || []).map(f => mapDriveFile(f, rootId));
+      const allMapped = (response.data.files || []).map(f => mapDriveFile(f, rootId));
+      // Strict subtree filtering: only items whose ancestor chain reaches 'root' (which is mapped from LOCKED_ROOT_ID)
+      const byIdMap = new Map(allMapped.map(item => [item.id, item]));
+      const memo = new Map();
+      function isInsideLockedRoot(item) {
+        if (!item) return false;
+        if (memo.has(item.id)) return memo.get(item.id);
+        memo.set(item.id, false); // cycle guard
+        if (item.parent === 'root') {
+          memo.set(item.id, true);
+          return true;
+        }
+        const parentItem = byIdMap.get(item.parent);
+        const result = parentItem ? isInsideLockedRoot(parentItem) : false;
+        memo.set(item.id, result);
+        return result;
+      }
+      const files = allMapped.filter(f => f.rawParentId && isInsideLockedRoot(f));
       const sq = aboutRes.data?.storageQuota || null;
       return res.json({
         mode: 'google',

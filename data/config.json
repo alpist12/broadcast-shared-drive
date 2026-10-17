@@ -1,9 +1,9 @@
 {
-  "driveName": "방송국 드라이브",
+  "driveName": "방송국 공유 드라이브",
   "clientId": "533555779141-4l2im5ih2dou2b6omh0t07kh40soh196.apps.googleusercontent.com",
   "clientSecret": "",
   "redirectUri": "http://localhost:3000/api/oauth2callback",
-  "rootFolderId": "root",
+  "rootFolderId": "1Sb255-QJM--dC_1YGzJax-VlqpWtAxif",
   "accessPin": "",
   "tokens": null,
   "userEmail": ""
