@@ -1,0 +1,17 @@
+{
+  "name": "broadcast-shared-drive",
+  "version": "1.0.0",
+  "description": "방송국 공유 드라이브 (Google Drive 연동 및 로컬 하이브리드 웹앱)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "googleapis": "^144.0.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
